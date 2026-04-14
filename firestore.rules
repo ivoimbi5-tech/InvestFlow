@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: investments
+    // Document ID: randomUUID
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, 1-100 chars)
+    //   - amount: number (required, positive)
+    //   - type: string (required, enum: fixed, variable, crypto, other)
+    //   - date: string (required, ISO 8601)
+    //   - userId: string (required, matches auth.uid)
+    //
+    // Collection: businesses
+    // Document ID: randomUUID
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required, 1-100 chars)
+    //   - initialCapital: number (required, >= 0)
+    //   - monthlyRevenue: number (required, >= 0)
+    //   - monthlyExpenses: number (required, >= 0)
+    //   - status: string (required, enum: planning, active, closed)
+    //   - userId: string (required, matches auth.uid)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidString(val, min, max) {
+      return val is string && val.size() >= min && val.size() <= max;
+    }
+
+    function isPositiveNumber(val) {
+      return val is number && val >= 0;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /investments/{investmentId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isAuthenticated() 
+        && request.resource.data.userId == request.auth.uid
+        && isValidString(request.resource.data.name, 1, 100)
+        && isPositiveNumber(request.resource.data.amount)
+        && request.resource.data.type in ['fixed', 'variable', 'crypto', 'other'];
+
+      allow update: if isAuthenticated() 
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid
+        && isValidString(request.resource.data.name, 1, 100)
+        && isPositiveNumber(request.resource.data.amount)
+        && request.resource.data.type in ['fixed', 'variable', 'crypto', 'other'];
+
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /businesses/{businessId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && isValidString(request.resource.data.name, 1, 100)
+        && isPositiveNumber(request.resource.data.initialCapital)
+        && isPositiveNumber(request.resource.data.monthlyRevenue)
+        && isPositiveNumber(request.resource.data.monthlyExpenses)
+        && request.resource.data.status in ['planning', 'active', 'closed'];
+
+      allow update: if isAuthenticated()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == request.auth.uid
+        && isValidString(request.resource.data.name, 1, 100)
+        && isPositiveNumber(request.resource.data.initialCapital)
+        && isPositiveNumber(request.resource.data.monthlyRevenue)
+        && isPositiveNumber(request.resource.data.monthlyExpenses)
+        && request.resource.data.status in ['planning', 'active', 'closed'];
+
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "Investment": {
+      "title": "Investment",
+      "description": "Financial investment data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["fixed", "variable", "crypto", "other"] },
+        "date": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "amount", "type", "date", "userId"]
+    },
+    "BusinessVenture": {
+      "title": "BusinessVenture",
+      "description": "Business venture data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "initialCapital": { "type": "number" },
+        "monthlyRevenue": { "type": "number" },
+        "monthlyExpenses": { "type": "number" },
+        "status": { "type": "string", "enum": ["planning", "active", "closed"] },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "initialCapital", "monthlyRevenue", "monthlyExpenses", "status", "userId"]
+    }
+  },
+  "firestore": {
+    "/investments/{investmentId}": {
+      "schema": "Investment",
+      "description": "Collection of user investments"
+    },
+    "/businesses/{businessId}": {
+      "schema": "BusinessVenture",
+      "description": "Collection of user business ventures"
+    }
+  }
+}

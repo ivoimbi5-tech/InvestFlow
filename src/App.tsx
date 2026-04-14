@@ -13,7 +13,9 @@ import {
   ArrowDownRight,
   Menu,
   X,
-  Trash2
+  Trash2,
+  LogOut,
+  LogIn
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -31,6 +33,19 @@ import {
   Cell
 } from 'recharts';
 import { Investment, BusinessVenture, FinancialProjection } from './types';
+import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged } from './firebase';
+import firebaseConfig from '../firebase-applet-config.json';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  updateDoc,
+  setDoc
+} from 'firebase/firestore';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
@@ -39,6 +54,8 @@ const formatCurrency = (value: number) => {
 };
 
 export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'investments' | 'business'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
@@ -46,48 +63,45 @@ export default function App() {
   const [isInvModalOpen, setIsInvModalOpen] = useState(false);
   const [isBizModalOpen, setIsBizModalOpen] = useState(false);
 
-  // Data state with localStorage persistence and error handling
-  const [investments, setInvestments] = useState<Investment[]>(() => {
-    try {
-      const saved = localStorage.getItem('investflow_investments');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : [];
-      }
-    } catch (e) {
-      console.error('Error loading investments:', e);
-    }
-    return [];
-  });
-  
-  const [businesses, setBusinesses] = useState<BusinessVenture[]>(() => {
-    try {
-      const saved = localStorage.getItem('investflow_businesses');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : [];
-      }
-    } catch (e) {
-      console.error('Error loading businesses:', e);
-    }
-    return [];
-  });
+  // Data state
+  const [investments, setInvestments] = useState<Investment[]>([]);
+  const [businesses, setBusinesses] = useState<BusinessVenture[]>([]);
 
+  // Auth Listener
   useEffect(() => {
-    try {
-      localStorage.setItem('investflow_investments', JSON.stringify(investments));
-    } catch (e) {
-      console.error('Error saving investments:', e);
-    }
-  }, [investments]);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
+  // Firestore Listeners
   useEffect(() => {
-    try {
-      localStorage.setItem('investflow_businesses', JSON.stringify(businesses));
-    } catch (e) {
-      console.error('Error saving businesses:', e);
+    if (!user) {
+      setInvestments([]);
+      setBusinesses([]);
+      return;
     }
-  }, [businesses]);
+
+    const invQuery = query(collection(db, 'investments'), where('userId', '==', user.uid));
+    const bizQuery = query(collection(db, 'businesses'), where('userId', '==', user.uid));
+
+    const unsubInv = onSnapshot(invQuery, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Investment));
+      setInvestments(data);
+    });
+
+    const unsubBiz = onSnapshot(bizQuery, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as BusinessVenture));
+      setBusinesses(data);
+    });
+
+    return () => {
+      unsubInv();
+      unsubBiz();
+    };
+  }, [user]);
 
   const totalInvested = useMemo(() => investments.reduce((acc, inv) => acc + inv.amount, 0), [investments]);
   const totalBusinessRevenue = useMemo(() => businesses.reduce((acc, b) => acc + b.monthlyRevenue, 0), [businesses]);
@@ -99,17 +113,14 @@ export default function App() {
     const data: FinancialProjection[] = [];
     let currentBalance = totalEquity;
     
-    // If no data, return empty array or flat line
-    if (totalEquity === 0 && monthlyProfit === 0) {
-      return [];
-    }
+    if (totalEquity === 0 && monthlyProfit === 0) return [];
 
     for (let i = 0; i < 12; i++) {
       const month = new Date();
       month.setMonth(month.getMonth() + i);
       const monthName = month.toLocaleString('pt-BR', { month: 'short' });
       
-      const growth = currentBalance * 0.01; // 1% monthly growth estimate
+      const growth = currentBalance * 0.01;
       currentBalance += growth + monthlyProfit;
       
       data.push({
@@ -122,50 +133,110 @@ export default function App() {
     return data;
   }, [totalEquity, monthlyProfit]);
 
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Login error:', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
   const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
-  const addInvestment = (inv: Omit<Investment, 'id' | 'date'>) => {
-    if (!inv.name || inv.amount <= 0) return;
-    const newInv: Investment = {
-      ...inv,
-      id: crypto.randomUUID(),
-      date: new Date().toISOString()
-    };
-    setInvestments([...investments, newInv]);
-    setIsInvModalOpen(false);
+  const addInvestment = async (inv: Omit<Investment, 'id' | 'date'>) => {
+    if (!user || !inv.name || inv.amount <= 0) return;
+    try {
+      await addDoc(collection(db, 'investments'), {
+        ...inv,
+        userId: user.uid,
+        date: new Date().toISOString()
+      });
+      setIsInvModalOpen(false);
+    } catch (error) {
+      console.error('Error adding investment:', error);
+    }
   };
 
-  const addBusiness = (biz: Omit<BusinessVenture, 'id' | 'status'>) => {
-    if (!biz.name || biz.initialCapital < 0) return;
-    const newBiz: BusinessVenture = {
-      ...biz,
-      id: crypto.randomUUID(),
-      status: 'active'
-    };
-    setBusinesses([...businesses, newBiz]);
-    setIsBizModalOpen(false);
+  const addBusiness = async (biz: Omit<BusinessVenture, 'id' | 'status'>) => {
+    if (!user || !biz.name || biz.initialCapital < 0) return;
+    try {
+      await addDoc(collection(db, 'businesses'), {
+        ...biz,
+        userId: user.uid,
+        status: 'active'
+      });
+      setIsBizModalOpen(false);
+    } catch (error) {
+      console.error('Error adding business:', error);
+    }
   };
 
-  const deleteInvestment = (id: string) => {
+  const deleteInvestment = async (id: string) => {
     if (window.confirm('Tem certeza que deseja excluir este investimento?')) {
-      setInvestments(investments.filter(i => i.id !== id));
+      try {
+        await deleteDoc(doc(db, 'investments', id));
+      } catch (error) {
+        console.error('Error deleting investment:', error);
+      }
     }
   };
 
-  const deleteBusiness = (id: string) => {
+  const deleteBusiness = async (id: string) => {
     if (window.confirm('Tem certeza que deseja excluir este empreendimento?')) {
-      setBusinesses(businesses.filter(b => b.id !== id));
+      try {
+        await deleteDoc(doc(db, 'businesses', id));
+      } catch (error) {
+        console.error('Error deleting business:', error);
+      }
     }
   };
 
-  const clearAllData = () => {
-    if (window.confirm('AVISO: Isso apagará TODOS os seus dados permanentemente. Continuar?')) {
-      setInvestments([]);
-      setBusinesses([]);
-      localStorage.removeItem('investflow_investments');
-      localStorage.removeItem('investflow_businesses');
-    }
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F8F9FA]">
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+          className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full"
+        />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center space-y-6 border border-gray-100"
+        >
+          <div className="w-20 h-20 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center text-white shadow-lg shadow-blue-200">
+            <TrendingUp size={40} />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-3xl font-bold text-gray-900">InvestFlow</h1>
+            <p className="text-gray-500">Gerencie seus investimentos e negócios em um só lugar.</p>
+          </div>
+          <button 
+            onClick={handleLogin}
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-200 py-3 rounded-2xl font-semibold hover:bg-gray-50 transition-all active:scale-95"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-6 h-6" />
+            Entrar com Google
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#1A1A1A] font-sans flex flex-col md:flex-row">
@@ -220,13 +291,19 @@ export default function App() {
         </nav>
 
         <div className="p-4 border-t border-gray-100 space-y-2">
-          <NavItem icon={<Settings size={20} />} label="Configurações" active={false} onClick={() => {}} />
+          <div className="flex items-center gap-3 px-4 py-3 mb-2">
+            <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border border-gray-200" />
+            <div className="overflow-hidden">
+              <p className="text-sm font-semibold truncate">{user.displayName}</p>
+              <p className="text-[10px] text-gray-500 truncate">{user.email}</p>
+            </div>
+          </div>
           <button 
-            onClick={clearAllData}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-rose-500 hover:bg-rose-50 transition-all duration-200"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-500 hover:bg-rose-50 hover:text-rose-600 transition-all duration-200"
           >
-            <Trash2 size={20} />
-            <span className="text-sm">Limpar Tudo</span>
+            <LogOut size={20} />
+            <span className="text-sm">Sair</span>
           </button>
         </div>
       </aside>
@@ -258,7 +335,7 @@ export default function App() {
               <Plus size={20} />
             </button>
             <div className="w-8 h-8 bg-gray-200 rounded-full overflow-hidden border border-gray-300">
-              <img src="https://picsum.photos/seed/user/32/32" alt="User" referrerPolicy="no-referrer" />
+              <img src={user.photoURL} alt={user.displayName} referrerPolicy="no-referrer" />
             </div>
           </div>
         </header>
